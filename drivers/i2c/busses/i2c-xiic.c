@@ -28,6 +28,8 @@
 /* Supports:
  * Xilinx IIC
  */
+//#define DEBUG
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -40,6 +42,13 @@
 #include <linux/i2c-xiic.h>
 #include <linux/io.h>
 #include <linux/slab.h>
+
+#ifdef CONFIG_OF
+#include <linux/of.h>
+#include <linux/of_platform.h>
+#include <linux/of_i2c.h>
+#include <linux/of_address.h>
+#endif
 
 #define DRIVER_NAME "xiic-i2c"
 
@@ -175,17 +184,17 @@ static void __xiic_start_xfer(struct xiic_i2c *i2c);
 
 static inline void xiic_setreg8(struct xiic_i2c *i2c, int reg, u8 value)
 {
-	iowrite8(value, i2c->base + reg);
+	iowrite32(value, i2c->base + reg);
 }
 
 static inline u8 xiic_getreg8(struct xiic_i2c *i2c, int reg)
 {
-	return ioread8(i2c->base + reg);
+	return ioread32(i2c->base + reg);
 }
 
 static inline void xiic_setreg16(struct xiic_i2c *i2c, int reg, u16 value)
 {
-	iowrite16(value, i2c->base + reg);
+	iowrite32(value, i2c->base + reg);
 }
 
 static inline void xiic_setreg32(struct xiic_i2c *i2c, int reg, int value)
@@ -324,6 +333,7 @@ static void xiic_wakeup(struct xiic_i2c *i2c, int code)
 	i2c->rx_msg = NULL;
 	i2c->nmsgs = 0;
 	i2c->state = code;
+
 	wake_up(&i2c->wait);
 }
 
@@ -342,9 +352,9 @@ static void xiic_process(struct xiic_i2c *i2c)
 	pend = isr & ier;
 
 	dev_dbg(i2c->adap.dev.parent, "%s entry, IER: 0x%x, ISR: 0x%x, "
-		"pend: 0x%x, SR: 0x%x, msg: %p, nmsgs: %d\n",
+		"pend: 0x%x, SR: 0x%x, msg: %p, nmsgs: %d watermark %d\n",
 		__func__, ier, isr, pend, xiic_getreg8(i2c, XIIC_SR_REG_OFFSET),
-		i2c->tx_msg, i2c->nmsgs);
+		i2c->tx_msg, i2c->nmsgs, xiic_getreg32(i2c, XIIC_RFD_REG_OFFSET));
 
 	/* Do not processes a devices interrupts if the device has no
 	 * interrupts pending
@@ -386,6 +396,10 @@ static void xiic_process(struct xiic_i2c *i2c)
 
 		xiic_read_rx(i2c);
 		if (xiic_rx_space(i2c) == 0) {
+// 			uint8_t cr = xiic_getreg8(i2c, XIIC_CR_REG_OFFSET);
+// 			cr &= ~(XIIC_CR_MSMS_MASK | XIIC_CR_NO_ACK_MASK);
+// 			xiic_setreg8(i2c, XIIC_CR_REG_OFFSET, cr);
+
 			/* this is the last part of the message */
 			i2c->rx_msg = NULL;
 
@@ -400,6 +414,7 @@ static void xiic_process(struct xiic_i2c *i2c)
 			 * otherwise the transfer will be finialise when
 			 * receiving the bus not busy interrupt
 			 */
+
 			if (i2c->nmsgs > 1) {
 				i2c->nmsgs--;
 				i2c->tx_msg++;
@@ -407,6 +422,8 @@ static void xiic_process(struct xiic_i2c *i2c)
 					"%s will start next...\n", __func__);
 
 				__xiic_start_xfer(i2c);
+// 			} else {
+// 				xiic_wakeup(i2c, STATE_DONE);
 			}
 		}
 	} else if (pend & XIIC_INTR_BNB_MASK) {
@@ -426,7 +443,7 @@ static void xiic_process(struct xiic_i2c *i2c)
 			xiic_wakeup(i2c, STATE_ERROR);
 
 	} else if (pend & (XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK)) {
-		/* Transmit register/FIFO is empty or ½ empty */
+		/* Transmit register/FIFO is empty or    empty */
 
 		clr = pend &
 			(XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK);
@@ -505,6 +522,11 @@ static void xiic_start_recv(struct xiic_i2c *i2c)
 	u8 rx_watermark;
 	struct i2c_msg *msg = i2c->rx_msg = i2c->tx_msg;
 
+// 	dev_dbg(i2c->adap.dev.parent, "%s entry, msg: %p, len: %d, "
+// 		"ISR: 0x%x, CR: 0x%x\n",
+// 		__func__, msg, msg->len, xiic_getreg32(i2c, XIIC_IISR_OFFSET),
+// 		xiic_getreg8(i2c, XIIC_CR_REG_OFFSET));
+
 	/* Clear and enable Rx full interrupt. */
 	xiic_irq_clr_en(i2c, XIIC_INTR_RX_FULL_MASK | XIIC_INTR_TX_ERROR_MASK);
 
@@ -514,9 +536,12 @@ static void xiic_start_recv(struct xiic_i2c *i2c)
 	 * In the case where there is only one byte to receive
 	 * we can check if ERROR and RX full is set at the same time
 	 */
+
 	rx_watermark = msg->len;
+
 	if (rx_watermark > IIC_RX_FIFO_DEPTH)
 		rx_watermark = IIC_RX_FIFO_DEPTH;
+
 	xiic_setreg8(i2c, XIIC_RFD_REG_OFFSET, rx_watermark - 1);
 
 	if (!(msg->flags & I2C_M_NOSTART))
@@ -528,7 +553,8 @@ static void xiic_start_recv(struct xiic_i2c *i2c)
 	xiic_irq_clr_en(i2c, XIIC_INTR_BNB_MASK);
 
 	xiic_setreg16(i2c, XIIC_DTR_REG_OFFSET,
-		msg->len | ((i2c->nmsgs == 1) ? XIIC_TX_DYN_STOP_MASK : 0));
+		(msg->len) | ((i2c->nmsgs == 1) ? XIIC_TX_DYN_STOP_MASK : 0));
+
 	if (i2c->nmsgs == 1)
 		/* very last, enable bus not busy as well */
 		xiic_irq_clr_en(i2c, XIIC_INTR_BNB_MASK);
@@ -694,8 +720,11 @@ static int __devinit xiic_i2c_probe(struct platform_device *pdev)
 	struct xiic_i2c_platform_data *pdata;
 	struct resource *res;
 	int ret, irq;
-	u8 i;
 
+#ifndef CONFIG_OF
+	struct xiic_i2c_platform_data *pdata;
+	u8 i;
+#endif
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
 		goto resource_missing;
@@ -703,10 +732,6 @@ static int __devinit xiic_i2c_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		goto resource_missing;
-
-	pdata = (struct xiic_i2c_platform_data *) pdev->dev.platform_data;
-	if (!pdata)
-		return -EINVAL;
 
 	i2c = kzalloc(sizeof(*i2c), GFP_KERNEL);
 	if (!i2c)
@@ -731,6 +756,10 @@ static int __devinit xiic_i2c_probe(struct platform_device *pdev)
 	i2c_set_adapdata(&i2c->adap, i2c);
 	i2c->adap.dev.parent = &pdev->dev;
 
+#ifdef CONFIG_OF
+	i2c->adap.dev.of_node = of_node_get(pdev->dev.of_node);
+#endif
+
 	xiic_reinit(i2c);
 
 	spin_lock_init(&i2c->lock);
@@ -748,9 +777,21 @@ static int __devinit xiic_i2c_probe(struct platform_device *pdev)
 		goto add_adapter_failed;
 	}
 
+
+	dev_info(&pdev->dev, "mapped to 0x%08X, irq=%d\n",
+		(unsigned int)i2c->base, irq);
+
+#ifndef CONFIG_OF
+	pdata = (struct xiic_i2c_platform_data *) pdev->dev.platform_data;
+	if (!pdata)
+		return -EINVAL;
+
 	/* add in known devices to the bus */
 	for (i = 0; i < pdata->num_devices; i++)
 		i2c_new_device(&i2c->adap, pdata->devices + i);
+#else
+	of_i2c_register_devices(&i2c->adap);
+#endif
 
 	return 0;
 
@@ -795,18 +836,46 @@ static int __devexit xiic_i2c_remove(struct platform_device* pdev)
 	return 0;
 }
 
+#ifdef CONFIG_OF
+/* Match table for of_platform binding */
+static struct of_device_id __devinitdata xilinx_iic_of_match[] = {
+ { .compatible = "xlnx,xps-iic-2.00.a", },
+ {},
+};
+MODULE_DEVICE_TABLE(of, xilinx_iic_of_match);
+#endif
+
+
+
+/* work with hotplug and coldplug */
+MODULE_ALIAS("platform:"DRIVER_NAME);
+
 static struct platform_driver xiic_i2c_driver = {
 	.probe   = xiic_i2c_probe,
 	.remove  = __devexit_p(xiic_i2c_remove),
 	.driver  = {
 		.owner = THIS_MODULE,
 		.name = DRIVER_NAME,
+#ifdef CONFIG_OF
+		.of_match_table = xilinx_iic_of_match,
+#endif
+
 	},
 };
 
-module_platform_driver(xiic_i2c_driver);
+static int __init xiic_i2c_init(void)
+{
+	return platform_driver_register(&xiic_i2c_driver);
+}
+
+static void __exit xiic_i2c_exit(void)
+{
+	platform_driver_unregister(&xiic_i2c_driver);
+}
+
+module_init(xiic_i2c_init);
+module_exit(xiic_i2c_exit);
 
 MODULE_AUTHOR("info@mocean-labs.com");
 MODULE_DESCRIPTION("Xilinx I2C bus driver");
 MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("platform:"DRIVER_NAME);
