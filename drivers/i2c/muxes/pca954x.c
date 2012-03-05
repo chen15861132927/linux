@@ -205,8 +205,9 @@ static int pca954x_probe(struct i2c_client *client,
 	 * that the mux is in fact present. This also
 	 * initializes the mux to disconnected state.
 	 */
-	if (i2c_smbus_write_byte(client, 0) < 0) {
-		dev_warn(&client->dev, "probe failed\n");
+	ret = i2c_smbus_write_byte(client, 0x00);
+	if (ret < 0) {
+		dev_warn(&client->dev, "probe failed: %d\n", ret);
 		goto exit_free;
 	}
 
@@ -226,7 +227,7 @@ static int pca954x_probe(struct i2c_client *client,
 		}
 
 		data->virt_adaps[num] =
-			i2c_add_mux_adapter(adap, client,
+			i2c_add_mux_adapter(adap, &client->dev, client,
 				force, num, pca954x_select_chan,
 				(pdata && pdata->modes[num].deselect_on_exit)
 					? pca954x_deselect_mux : NULL);
