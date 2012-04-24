@@ -242,7 +242,10 @@ static void xiic_clear_rx_fifo(struct xiic_i2c *i2c)
 
 static void xiic_reinit(struct xiic_i2c *i2c)
 {
-	xiic_setreg32(i2c, XIIC_RESETR_OFFSET, XIIC_RESET_MASK);
+//	xiic_setreg32(i2c, XIIC_RESETR_OFFSET, XIIC_RESET_MASK);
+	xiic_setreg8(i2c, 0x124, 1);
+
+	xiic_irq_dis(i2c, ~0);
 
 	/* Set receive Fifo depth to maximum (zero based). */
 	xiic_setreg8(i2c, XIIC_RFD_REG_OFFSET, IIC_RX_FIFO_DEPTH - 1);
