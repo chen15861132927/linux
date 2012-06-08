@@ -337,6 +337,7 @@ static const struct of_device_id ad9122_dds_of_match[] __devinitconst = {
 	{ .compatible = "xlnx,cf-ad9739a-core-1.00.a", .data = (void*) 1},
 	{ .compatible = "xlnx,cf-ad9122x2-core-1.00.a", .data = (void*) 1},
 	{ .compatible = "xlnx,cf-ad9122-core-2.00.a", .data = (void*) 2},
+	{ .compatible = "xlnx,axi-dac-4d-2c-1.00.a", .data = (void*) 2},
 { /* end of list */ },
 };
 MODULE_DEVICE_TABLE(of, ad9122_dds_of_match);
