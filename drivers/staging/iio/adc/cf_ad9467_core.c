@@ -578,7 +578,8 @@ static int __devexit aim_of_remove(struct platform_device *op)
 static const struct of_device_id aim_of_match[] __devinitconst = {
 	{ .compatible = "xlnx,cf-ad9467-core-1.00.a", },
 	{ .compatible = "xlnx,cf-ad9643-core-1.00.a", },
-	{ /* end of list */ },
+	{ .compatible = "xlnx,axi-adc-2c-1.00.a", },
+{ /* end of list */ },
 };
 MODULE_DEVICE_TABLE(of, aim_of_match);
 
