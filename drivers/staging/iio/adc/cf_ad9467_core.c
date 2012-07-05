@@ -32,6 +32,7 @@
 #include "../buffer.h"
 
 #include "cf_ad9467.h"
+#define DCO_DEBUG
 
 static int aim_spi_read(struct aim_state *st, unsigned reg)
 {
@@ -102,10 +103,112 @@ static int aim_spi_write(struct aim_state *st, unsigned reg, unsigned val)
 	return 0;
 }
 
+static int aim_testmode_set(struct iio_dev *indio_dev,
+			     unsigned chan_mask, unsigned mode)
+{
+	struct aim_state *st = iio_priv(indio_dev);
+
+	aim_spi_write(st, ADC_REG_CHAN_INDEX, chan_mask);
+	aim_spi_write(st, ADC_REG_TEST_IO, mode);
+	aim_spi_write(st, ADC_REG_CHAN_INDEX, 0x3);
+	aim_spi_write(st, ADC_REG_TRANSFER, TRANSFER_SYNC);
+
+	if (chan_mask & BIT(0))
+		st->testmode[0] = mode;
+	if (chan_mask & BIT(1))
+		st->testmode[1] = mode;
+
+	return 0;
+}
+
 static int aim_debugfs_open(struct inode *inode, struct file *file)
 {
 	if (inode->i_private)
 		file->private_data = inode->i_private;
+
+	return 0;
+}
+
+static int aim_dco_calibrate(struct iio_dev *indio_dev)
+{
+	struct aim_state *st = iio_priv(indio_dev);
+	int dco, ret, cnt, start, max_start, max_cnt;
+	unsigned stat;
+	unsigned char err_field[33];
+
+	aim_testmode_set(indio_dev, 0x2, TESTMODE_PN23_SEQ);
+	aim_testmode_set(indio_dev, 0x1, TESTMODE_PN9_SEQ);
+
+	aim_write(st, AD9467_PCORE_PN_ERR_CTRL, AD9467_PN23_1_EN |
+		  AD9467_PN9_0_EN);
+
+	for(dco = 0; dco <= 32; dco++) {
+		ret = 0;
+		aim_spi_write(st, ADC_REG_OUTPUT_DELAY,
+			      dco > 0 ? ((dco - 1) | 0x80) : 0);
+		aim_spi_write(st, ADC_REG_TRANSFER, TRANSFER_SYNC);
+		aim_write(st, AD9467_PCORE_ADC_STAT, AD9467_PCORE_ADC_STAT_MASK);
+
+		cnt = 4;
+
+		do {
+			mdelay(8);
+			stat = aim_read(st, AD9467_PCORE_ADC_STAT);
+			if ((cnt-- < 0) | (stat & (AD9467_PCORE_ADC_STAT_PN_ERR0 |
+				AD9467_PCORE_ADC_STAT_PN_ERR1))) {
+				ret = -EIO;
+				break;
+			}
+		} while (stat & (AD9467_PCORE_ADC_STAT_PN_OOS0 |
+			 AD9467_PCORE_ADC_STAT_PN_OOS1));
+
+		cnt = 4;
+
+		if (!ret)
+			do {
+				mdelay(4);
+				stat = aim_read(st, AD9467_PCORE_ADC_STAT);
+				if (stat & (AD9467_PCORE_ADC_STAT_PN_ERR0 |
+					AD9467_PCORE_ADC_STAT_PN_ERR1)) {
+					ret = -EIO;
+					break;
+				}
+			} while (cnt--);
+
+		err_field[dco] = !!ret;
+	}
+
+	for(dco = 0, cnt = 0, max_cnt = 0, start = -1, max_start = 0;
+		dco <= 32; dco++) {
+		if (err_field[dco] == 0) {
+			if (start == -1)
+				start = dco;
+			cnt++;
+		} else {
+			if (cnt > max_cnt) {
+				max_cnt = cnt;
+				max_start = start;
+			}
+			start = -1;
+			cnt = 0;
+		}
+	}
+
+	dco = max_start + (max_cnt / 2);
+
+	aim_testmode_set(indio_dev, 0x3, TESTMODE_OFF);
+	aim_spi_write(st, ADC_REG_OUTPUT_DELAY,
+		      dco > 0 ? ((dco - 1) | 0x80) : 0);
+	aim_spi_write(st, ADC_REG_TRANSFER, TRANSFER_SYNC);
+
+#ifdef DCO_DEBUG
+	for(cnt = 0; cnt <= 32; cnt++)
+		if (cnt == dco)
+			printk("|");
+		else
+			printk("%c", err_field[cnt] ? '-' : 'o');
+	printk(" DCO 0x%X\n", dco > 0 ? ((dco - 1) | 0x80) : 0);
+#endif
 
 	return 0;
 }
@@ -120,12 +223,29 @@ static ssize_t aim_debugfs_pncheck_read(struct file *file, char __user *userbuf,
 	unsigned stat;
 
 	stat = aim_read(st, AD9467_PCORE_ADC_STAT);
-	len = sprintf(buf, "%s %s\n", (stat & AD9467_PCORE_ADC_STAT_PN_OOS) ?
-		"Out of Sync :" : "In Sync :",
-		(stat & AD9467_PCORE_ADC_STAT_PN_ERR) ?
-		"PN Error" : "No Error");
 
-	aim_write(st, AD9467_PCORE_ADC_STAT, 0xF);
+	switch (st->id) {
+	case CHIPID_AD9467:
+		len = sprintf(buf, "%s %s\n", (stat & AD9467_PCORE_ADC_STAT_PN_OOS0) ?
+			"Out of Sync :" : "In Sync :",
+			(stat & AD9467_PCORE_ADC_STAT_PN_ERR0) ?
+			"PN Error" : "No Error");
+		break;
+	case CHIPID_AD9643:
+		len = sprintf(buf, "CH0 %s %s\nCH1 %s %s\n", (stat & AD9467_PCORE_ADC_STAT_PN_OOS0) ?
+			"Out of Sync :" : "In Sync :",
+			(stat & AD9467_PCORE_ADC_STAT_PN_ERR0) ?
+			"PN Error" : "No Error",
+			(stat & AD9467_PCORE_ADC_STAT_PN_OOS1) ?
+			"Out of Sync :" : "In Sync :",
+			(stat & AD9467_PCORE_ADC_STAT_PN_ERR1) ?
+			"PN Error" : "No Error");
+		break;
+	default:
+		len = 0;
+	}
+
+	aim_write(st, AD9467_PCORE_ADC_STAT, AD9467_PCORE_ADC_STAT_MASK);
 
 	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
 }
@@ -135,7 +255,7 @@ static ssize_t aim_debugfs_pncheck_write(struct file *file,
 {
 	struct iio_dev *indio_dev = file->private_data;
 	struct aim_state *st = iio_priv(indio_dev);
-	unsigned mode;
+	unsigned mode = TESTMODE_OFF;
 	char buf[80], *p = buf;
 
 	count = min_t(size_t, count, (sizeof(buf)-1));
@@ -148,21 +268,21 @@ static ssize_t aim_debugfs_pncheck_write(struct file *file,
 		mode = TESTMODE_PN9_SEQ;
 	else if (sysfs_streq(p, "PN23"))
 		mode = TESTMODE_PN23_SEQ;
+	else if (sysfs_streq(p, "CALIB"))
+		aim_dco_calibrate(indio_dev);
 	else
 		mode = TESTMODE_OFF;
 
-	aim_spi_write(st, ADC_REG_TEST_IO, mode);
-	aim_spi_write(st, ADC_REG_TRANSFER, TRANSFER_SYNC);
+	mutex_lock(&indio_dev->mlock);
+	aim_testmode_set(indio_dev, 0x3, mode);
 
 	aim_write(st, AD9467_PCORE_PN_ERR_CTRL, (mode == TESTMODE_PN23_SEQ) ?
 		  AD9467_PN23_EN : AD9467_PN9_EN);
 
 	mdelay(1); /* FIXME */
 
-	aim_write(st, AD9467_PCORE_ADC_STAT,
-		  AD9467_PCORE_ADC_STAT_PN_OOS |
-		  AD9467_PCORE_ADC_STAT_PN_OOS |
-		  AD9467_PCORE_ADC_STAT_OVR);
+	aim_write(st, AD9467_PCORE_ADC_STAT, AD9467_PCORE_ADC_STAT_MASK);
+	mutex_unlock(&indio_dev->mlock);
 
 	return count;
 }
@@ -299,10 +419,95 @@ static const int ad9643_scale_table[][2] = {
 	{21332, 0x10},
 };
 
+static const char testmodes[][16] = {
+	[TESTMODE_OFF]			= "off",
+	[TESTMODE_MIDSCALE_SHORT]	= "midscale_short",
+	[TESTMODE_POS_FULLSCALE]	= "pos_fullscale",
+	[TESTMODE_NEG_FULLSCALE]	= "neg_fullscale",
+	[TESTMODE_ALT_CHECKERBOARD]	= "checkerboard",
+	[TESTMODE_PN23_SEQ]		= "pn_long",
+	[TESTMODE_PN9_SEQ]		= "pn_short",
+	[TESTMODE_ONE_ZERO_TOGGLE]	= "one_zero_toggle",
+};
+
+static ssize_t aim_testmode_mode_available(struct iio_dev *indio_dev,
+				   uintptr_t private,
+					   const struct iio_chan_spec *chan,
+					   char *buf)
+{
+	size_t len = 0;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(testmodes); ++i) {
+		len += sprintf(buf + len, "%s ", testmodes[i]);
+	}
+	len += sprintf(buf + len, "\n");
+	return len;
+}
+
+static ssize_t aim_testmode_read(struct iio_dev *indio_dev,
+				 uintptr_t private,
+				 const struct iio_chan_spec *chan, char *buf)
+{
+	struct aim_state *st = iio_priv(indio_dev);
+
+	return sprintf(buf, "%s\n",
+		testmodes[st->testmode[chan->channel]]);
+}
+
+static ssize_t aim_testmode_write(struct iio_dev *indio_dev,
+				  uintptr_t private,
+				  const struct iio_chan_spec *chan,
+				  const char *buf, size_t len)
+{
+	struct aim_state *st = iio_priv(indio_dev);
+	unsigned int mode, i;
+	int ret;
+
+	mode = 0;
+
+	for (i = 0; i < ARRAY_SIZE(testmodes); ++i) {
+		if (sysfs_streq(buf, testmodes[i])) {
+			mode = i;
+			break;
+		}
+	}
+
+	mutex_lock(&indio_dev->mlock);
+	ret = aim_testmode_set(indio_dev, 1 << chan->channel, mode);
+	mutex_unlock(&indio_dev->mlock);
+
+	return ret ? ret : len;
+}
+
+static struct iio_chan_spec_ext_info aim_ext_info[] = {
+	{
+		.name = "test_mode",
+		.read = aim_testmode_read,
+		.write = aim_testmode_write,
+	},
+	{
+		.name = "test_mode_available",
+		.read = aim_testmode_mode_available,
+		.shared = true,
+	},
+	{ },
+};
+
 #define AIM_CHAN(_chan, _si, _bits, _sign)			\
 	{ .type = IIO_VOLTAGE,						\
 	  .indexed = 1,							\
 	  .channel = _chan,						\
+	  .info_mask = IIO_CHAN_INFO_SCALE_SHARED_BIT,			\
+	  .ext_info = aim_ext_info,			\
+	  .scan_index = _si,						\
+	  .scan_type =  IIO_ST(_sign, _bits, 16, 0)}
+
+#define AIM_CHAN_FD(_chan, _si, _bits, _sign)			\
+	{ .type = IIO_VOLTAGE,						\
+	  .indexed = 1,							\
+	  .channel = _chan,						\
+	  .extend_name  = "frequency_domain",				\
 	  .info_mask = IIO_CHAN_INFO_SCALE_SHARED_BIT,			\
 	  .scan_index = _si,						\
 	  .scan_type =  IIO_ST(_sign, _bits, 16, 0)}
@@ -320,10 +525,13 @@ static const struct aim_chip_info aim_chip_info_tbl[] = {
 		.name = "AD9643",
 		.scale_table = ad9643_scale_table,
 		.num_scales = ARRAY_SIZE(ad9643_scale_table),
-		.num_channels = 2,
+		.num_channels = 4,
 		.available_scan_masks[0] = BIT(0) | BIT(1),
+		.available_scan_masks[1] = BIT(2) | BIT(3),
 		.channel[0] = AIM_CHAN(0, 0, 14, 'u'),
 		.channel[1] = AIM_CHAN(1, 1, 14, 'u'),
+		.channel[2] = AIM_CHAN_FD(0, 2, 14, 'u'),
+		.channel[3] = AIM_CHAN_FD(1, 3, 14, 'u'),
 	},
 };
 
@@ -490,14 +698,19 @@ static int __devinit aim_of_probe(struct platform_device *op)
 
 	aim_spi_write(st, ADC_REG_OUTPUT_MODE, def_mode);
 	aim_spi_write(st, ADC_REG_TEST_IO, TESTMODE_OFF);
+	aim_spi_write(st, ADC_REG_TRANSFER, TRANSFER_SYNC);
 
+#if 0
 	ret = of_property_read_u32(op->dev.of_node,
 				   "dco-output-delay",
 				   &dco_delay);
 	if (!ret) {
 		aim_spi_write(st, ADC_REG_OUTPUT_DELAY, dco_delay);
+		aim_spi_write(st, ADC_REG_TRANSFER, TRANSFER_SYNC);
 	}
-	aim_spi_write(st, ADC_REG_TRANSFER, TRANSFER_SYNC);
+#else
+	aim_dco_calibrate(indio_dev);
+#endif
 
 	aim_configure_ring(indio_dev);
 	ret = iio_buffer_register(indio_dev,

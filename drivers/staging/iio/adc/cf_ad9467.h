@@ -45,13 +45,22 @@
 #define AD9647_DMA_STAT_UNF		(1 << 2)
 
 /* AD9467_PCORE_ADC_STAT */
-#define AD9467_PCORE_ADC_STAT_OVR	(1 << 0)
-#define AD9467_PCORE_ADC_STAT_PN_OOS	(1 << 1) /* W1C */
-#define AD9467_PCORE_ADC_STAT_PN_ERR	(1 << 2) /* W1C */
+#define AD9467_PCORE_ADC_STAT_OVR0	(1 << 0) /* W1C */
+#define AD9467_PCORE_ADC_STAT_OVR1	(1 << 1) /* W1C */
+#define AD9467_PCORE_ADC_STAT_PN_OOS0	(1 << 2) /* W1C */
+#define AD9467_PCORE_ADC_STAT_PN_OOS1	(1 << 3) /* W1C */
+#define AD9467_PCORE_ADC_STAT_PN_ERR0	(1 << 4) /* W1C */
+#define AD9467_PCORE_ADC_STAT_PN_ERR1	(1 << 5) /* W1C */
+#define AD9467_PCORE_ADC_STAT_MASK	0x3F
 
 /* AD9467_PCORE_PN_ERR_CTRL */
-#define AD9467_PN23_EN			(1 << 0)
-#define AD9467_PN9_EN			(0 << 0)
+#define AD9467_PN23_1_EN		(1 << 1)
+#define AD9467_PN23_0_EN		(1 << 0)
+#define AD9467_PN9_1_EN			(0 << 1)
+#define AD9467_PN9_0_EN			(0 << 0)
+#define AD9467_PN23_EN			(AD9467_PN23_0_EN | AD9467_PN23_1_EN)
+#define AD9467_PN9_EN			(AD9467_PN9_0_EN | AD9467_PN9_1_EN)
+
 
 /* AD9467_PCORE_IDENT */
 #define AD9467_PCORE_IDENT_SLAVE	0x1
@@ -64,6 +73,7 @@
 #define ADC_REG_CHIP_PORT_CONF		0x00
 #define ADC_REG_CHIP_ID			0x01
 #define ADC_REG_CHIP_GRADE		0x02
+#define ADC_REG_CHAN_INDEX		0x05
 #define ADC_REG_TRANSFER		0xFF
 #define ADC_REG_MODES			0x08
 #define ADC_REG_TEST_IO			0x0D
@@ -108,7 +118,7 @@
 
 #define CHIPID_AD9643			0x82
 #define AD9643_REG_VREF_MASK		0x1F
-#define AD9643_DEF_OUTPUT_MODE		0x04
+#define AD9643_DEF_OUTPUT_MODE		0x00
 
 enum {
 	ID_AD9467,
@@ -121,7 +131,7 @@ struct aim_chip_info {
 	unsigned long			available_scan_masks[2];
 	const int			(*scale_table)[2];
 	int				num_scales;
-	struct iio_chan_spec		channel[2];
+	struct iio_chan_spec		channel[4];
 };
 
 struct aim_state {
@@ -138,8 +148,9 @@ struct aim_state {
 	unsigned			ring_lenght;
 	unsigned			rcount;
 	unsigned			fftcount;
-	unsigned			bytes_per_datum;
+//	unsigned			bytes_per_datum;
 	unsigned			id;
+	unsigned char			testmode[2];
 
 	/*
 	 * DMA (thus cache coherency maintenance) requires the

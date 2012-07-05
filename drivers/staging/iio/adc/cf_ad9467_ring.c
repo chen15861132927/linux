@@ -52,13 +52,15 @@ static int aim_read_first_n_hw_rb(struct iio_buffer *r,
 
 #if defined(CONFIG_CF_FFT)
 	if (st->fftcount) {
-		ret = fft_calculate(st->buf_phys, st->buf_phys + st->fftcount, st->fftcount / 4);
+		ret = fft_calculate(st->buf_phys, st->buf_phys + st->fftcount,
+				    st->fftcount / 4, *r->scan_mask >> 2);
 	}
 #endif
 	if (copy_to_user(buf, st->buf_virt + st->fftcount, count))
 		ret = -EFAULT;
 
-	if ((stat & AD9467_PCORE_ADC_STAT_OVR) || dma_stat)
+	if ((stat & (AD9467_PCORE_ADC_STAT_OVR0 | AD9467_PCORE_ADC_STAT_OVR1))
+		|| dma_stat)
 		dev_warn(indio_dev->dev.parent,
 			"STATUS: DMA_STAT 0x%X, ADC_STAT 0x%X\n",
 			dma_stat, stat);
@@ -93,9 +95,8 @@ static int aim_ring_set_length(struct iio_buffer *r, int lenght)
 static int aim_ring_get_bytes_per_datum(struct iio_buffer *r)
 {
 	struct iio_hw_buffer *hw_ring = iio_to_hw_buf(r);
-	struct aim_state *st = iio_priv(hw_ring->private);
 
-	return st->bytes_per_datum;
+	return r->bytes_per_datum;
 }
 
 static IIO_BUFFER_ENABLE_ATTR;
@@ -144,10 +145,11 @@ static const struct iio_buffer_access_funcs aim_ring_access_funcs = {
 static int __aim_hw_ring_state_set(struct iio_dev *indio_dev, bool state)
 {
 	struct aim_state *st = iio_priv(indio_dev);
+	struct iio_buffer *buffer = indio_dev->buffer;
 	struct dma_async_tx_descriptor *desc;
 	dma_cookie_t cookie;
 	int ret = 0;
-//mutex_lock(&st->lock);
+
 	if (!state) {
 		if (!completion_done(&st->dma_complete)) {
 			st->compl_stat = -EPERM;
@@ -158,7 +160,6 @@ static int __aim_hw_ring_state_set(struct iio_dev *indio_dev, bool state)
 		dma_free_coherent(indio_dev->dev.parent,
 				  PAGE_ALIGN(st->rcount + st->fftcount),
 				  st->buf_virt, st->buf_phys);
-//mutex_unlock(&st->lock);
 		return 0;
 	}
 
@@ -175,7 +176,10 @@ static int __aim_hw_ring_state_set(struct iio_dev *indio_dev, bool state)
 		st->rcount = st->ring_lenght;
 
 #if defined(CONFIG_CF_FFT)
-	st->fftcount = st->rcount;
+	if (*buffer->scan_mask & 0xC)
+		st->fftcount = st->rcount;
+	else
+		st->fftcount = 0;
 #else
 	st->fftcount = 0;
 #endif
@@ -215,14 +219,13 @@ static int __aim_hw_ring_state_set(struct iio_dev *indio_dev, bool state)
 	aim_write(st, AD9467_PCORE_DMA_STAT, 0xFF);
 	aim_write(st, AD9467_PCORE_DMA_CTRL,
 		  AD9647_DMA_CAP_EN | AD9647_DMA_CNT((st->rcount / 8) - 1));
-//mutex_unlock(&st->lock);
+
 	return 0;
 
 error_free:
 	dma_free_coherent(indio_dev->dev.parent, PAGE_ALIGN(st->rcount),
 			  st->buf_virt, st->buf_phys);
 error_ret:
-//mutex_unlock(&st->lock);
 	return ret;
 }
 
