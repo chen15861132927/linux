@@ -44,6 +44,24 @@
 #define FFT_PCORE_VERSION	0x0
 #define FFT_PCORE_CFG		0x4
 #define FFT_PCORE_STAT		0x8
+#define FFT_PCORE_POSTPROC	0xC
+#define FFT_PCORE_IRSEL		0x10
+#define FFT_PCORE_WINCFG	0x14
+
+#define FFT_PCORE_CFG_DEFAULT	0xD5700
+
+#define FFT_PCORE_POSTPROC_EN	0x1
+
+#define FFT_PCORE_IRSEL_I(x)	((x) << 2)
+#define FFT_PCORE_IRSEL_R(x)	((x) << 0)
+#define FFT_PCORE_IRSEL_CH0	1
+#define FFT_PCORE_IRSEL_CH1	2
+
+#define FFT_PCORE_WINCFG_INC(x)	((x) & 0xFFFF)
+#define FFT_PCORE_WINCFG_ENB	(1 << 16)
+
+
+
 
 struct fft_state {
 	struct device 			*dev;
@@ -85,7 +103,7 @@ static bool fft_dma_filter(struct dma_chan *chan, void *param)
 		chan->chan_id == p->chan_id;
 }
 
-int fft_calculate(dma_addr_t src, dma_addr_t dest, unsigned int size)
+int fft_calculate(dma_addr_t src, dma_addr_t dest, unsigned int size, unsigned irsel)
 {
 	struct fft_state *st = fft_state_glob;
 	struct dma_async_tx_descriptor *tx_desc, *rx_desc;
@@ -96,14 +114,27 @@ int fft_calculate(dma_addr_t src, dma_addr_t dest, unsigned int size)
 	if (st == NULL)
 		return -ENODEV;
 
-	if (((1 << nfft) != size) || !src || !dest)
+	if (((1 << nfft) != size) || !src || !dest || !irsel)
 		return -EINVAL;
 
-	/* printk("%s: %d: SRC: %p DEST: %p SIZE %d NFFT %d\n",__func__,__LINE__, src, dest, size, nfft); */
+	switch (irsel) {
+		case FFT_PCORE_IRSEL_CH0:
+		case FFT_PCORE_IRSEL_CH1:
+			irsel = FFT_PCORE_IRSEL_R(irsel);
+			break;
+		case FFT_PCORE_IRSEL_CH0 | FFT_PCORE_IRSEL_CH1:
+			irsel = FFT_PCORE_IRSEL_R(FFT_PCORE_IRSEL_CH0) |
+				FFT_PCORE_IRSEL_I(FFT_PCORE_IRSEL_CH1);
+			break;
+	}
 
 	mutex_lock(&st->lock);
 
-	fft_write(st, FFT_PCORE_CFG, 0x10000 | nfft);
+//	fft_write(st, FFT_PCORE_WINCFG, BIT(16) | (0x10000 >> nfft));
+	fft_write(st, FFT_PCORE_POSTPROC, FFT_PCORE_POSTPROC_EN);
+	fft_write(st, FFT_PCORE_IRSEL, irsel);
+	fft_write(st, FFT_PCORE_STAT, 0xFF);
+	fft_write(st, FFT_PCORE_CFG, FFT_PCORE_CFG_DEFAULT | nfft);
 
 	tx_desc = dmaengine_prep_slave_single(st->tx_chan, src, size * 4,
 					   DMA_TO_DEVICE, 0);
@@ -272,8 +303,6 @@ static int __devinit fft_of_probe(struct platform_device *op)
 
 	return 0;
 
-failed3:
-	dma_release_channel(st->rx_chan);
 failed2:
 	release_mem_region(phys_addr, remap_size);
 failed1:
@@ -316,6 +345,7 @@ static int __devexit fft_of_remove(struct platform_device *op)
 /* Match table for of_platform binding */
 static const struct of_device_id fft_of_match[] __devinitconst = {
 	{ .compatible = "xlnx,cf-fft-core-1.00.a", },
+	{ .compatible = "xlnx,axi-fft-1.00.a", },
 	{ /* end of list */ },
 };
 MODULE_DEVICE_TABLE(of, fft_of_match);
