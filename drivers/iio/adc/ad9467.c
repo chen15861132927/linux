@@ -64,14 +64,14 @@ static int __devinit ad9467_probe(struct spi_device *spi)
 	if (conv == NULL)
 		return -ENOMEM;
 
-	conv->id  = ad9467_spi_read(spi, ADC_REG_CHIP_ID);
-	if (conv->id  != spi_get_device_id(spi)->driver_data) {
+	spi->mode = SPI_MODE_0 | SPI_3WIRE;
+
+	conv->id = ad9467_spi_read(spi, ADC_REG_CHIP_ID);
+	if (conv->id != spi_get_device_id(spi)->driver_data) {
 		dev_err(&spi->dev, "Unrecognized CHIP_ID 0x%X\n", conv->id);
  		ret = -ENODEV;
  		goto out;
 	}
-
-	spi->mode = SPI_MODE_0 | SPI_3WIRE;
 
 	conv->write = ad9467_spi_write;
 	conv->read = ad9467_spi_read;
