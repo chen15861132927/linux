@@ -223,6 +223,7 @@ static int __devinit spi_xcomm_probe(struct i2c_client *i2c,
 {
 	struct spi_xcomm *spi_xcomm;
 	struct spi_master *master;
+	static int bus_num = 0;
 	int ret;
 
 	master = spi_alloc_master(&i2c->dev, sizeof(*spi_xcomm));
@@ -233,6 +234,7 @@ static int __devinit spi_xcomm_probe(struct i2c_client *i2c,
 	spi_xcomm->i2c = i2c;
 
 	master->num_chipselect = 16;
+	master->bus_num = bus_num++;
 	master->mode_bits = SPI_CPHA | SPI_CPOL | SPI_3WIRE;
 	master->setup = spi_xcomm_setup;
 	master->transfer_one_message = spi_xcomm_transfer_one;
