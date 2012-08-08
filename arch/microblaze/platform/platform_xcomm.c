@@ -120,20 +120,12 @@ struct ad9523_platform_data ad9523_pdata_lpc = {
 	.refb_r_div = 0,
 	.pll1_feedback_div = 4,
 	.pll1_charge_pump_current_nA = 2000,
-#if defined(CONFIG_ADIXCOMM_SYNC)
 	.zero_delay_mode_internal_en = false,
-#else
-	.zero_delay_mode_internal_en = true,
-#endif
 	.osc_in_feedback_en = false,
 	.refa_cmos_neg_inp_en = true,
 	.pll1_loop_filter_rzero = 3,
 
-#if defined(CONFIG_ADIXCOMM_SYNC)
-	.ref_mode = 2, /* 3 ?*/
-#else
-	.ref_mode = 3, /* 3 ?*/
-#endif
+	.ref_mode = SELECT_REFB, // REVERT_TO_REFA, /* 3 ?*/
 
 	.pll2_charge_pump_current_nA = 420000,
 	.pll2_ndiv_a_cnt = 0,
@@ -168,20 +160,12 @@ struct ad9523_platform_data ad9523_pdata_hpc = {
 	.refb_r_div = 0,
 	.pll1_feedback_div = 4,
 	.pll1_charge_pump_current_nA = 2000,
-#if defined(CONFIG_ADIXCOMM_SYNC)
 	.zero_delay_mode_internal_en = false,
-#else
-	.zero_delay_mode_internal_en = true,
-#endif
 	.osc_in_feedback_en = false,
 	.refa_cmos_neg_inp_en = true,
 	.pll1_loop_filter_rzero = 3,
 
-#if defined(CONFIG_ADIXCOMM_SYNC)
-	.ref_mode = 2, /* 3 ?*/
-#else
-	.ref_mode = 3, /* 3 ?*/
-#endif
+	.ref_mode = SELECT_REFB, // REVERT_TO_REFA, /* 3 ?*/
 
 	.pll2_charge_pump_current_nA = 420000,
 	.pll2_ndiv_a_cnt = 0,
