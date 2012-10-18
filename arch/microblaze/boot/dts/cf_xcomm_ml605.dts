@@ -311,6 +311,7 @@
 			reg = < 0x7a020000 0x10000 >;
 			spibus-connected = <&dac0_ad9122>;
 			dac-sample-frequency = <491520000>;
+			dma-request = <&axi_vdma_0 0>;
 			xlnx,dphase-timeout = <0x8>;
 			xlnx,family = "virtex6";
 			xlnx,num-mem = <0x1>;
@@ -325,6 +326,7 @@
 			reg = < 0x7a000000 0x10000 >;
 			dac-sample-frequency = <491520000>;
 			spibus-connected = <&dac1_ad9122>;
+			dma-request = <&axi_vdma_1 0>;
 			xlnx,dphase-timeout = <0x8>;
 			xlnx,family = "virtex6";
 			xlnx,num-mem = <0x1>;
@@ -468,7 +470,7 @@
 			compatible = "xlnx,axi-vdma";
 			ranges = < 0x7e220000 0x7e220000 0x10000 >;
 			reg = < 0x7e220000 0x10000 >;
-			xlnx,include-sg = <0x0>;
+//			xlnx,include-sg = <0x0>;
 			xlnx,num-fstores = <0x3>;
 			dma-channel@7e220000 {
 				compatible = "xlnx,axi-vdma-mm2s-channel";
@@ -486,7 +488,7 @@
 			compatible = "xlnx,axi-vdma";
 			ranges = < 0x7e200000 0x7e200000 0x10000 >;
 			reg = < 0x7e200000 0x10000 >;
-			xlnx,include-sg = <0x0>;
+//			xlnx,include-sg = <0x0>;
 			xlnx,num-fstores = <0x3>;
 			dma-channel@7e200000 {
 				compatible = "xlnx,axi-vdma-mm2s-channel";
